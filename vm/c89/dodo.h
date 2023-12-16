@@ -4,66 +4,174 @@
 #include<stdint.h> /* int8_t, intptr_t */
 #include<stdlib.h> /* exit */
 
-#ifdef _WIN32
-  #include <conio.h>
-#else
-  #include <unistd.h>
-  #include <termios.h>
-#endif
-
-/*
- Source code for getch is taken from:
- Crossline readline (https://github.com/jcwangxp/Crossline).
- It's a fantastic readline cross-platform replacement, but only getch was
- needed and there's no need to include everything else.
-*/
-#ifdef _WIN32
-int _getch (void) {	fflush (stdout); return _getch(); }
-#else
-int _getch ()
-{
-  char ch = 0;
-  struct termios old_term, cur_term;
-  fflush (stdout);
-  if (tcgetattr(STDIN_FILENO, &old_term) < 0)	{ perror("tcsetattr"); }
-  cur_term = old_term;
-  cur_term.c_lflag &= ~(ICANON | ECHO | ISIG); 
-  cur_term.c_cc[VMIN] = 1;
-  cur_term.c_cc[VTIME] = 0;
-  if (tcsetattr(STDIN_FILENO, TCSANOW, &cur_term) < 0)	{ perror("tcsetattr"); }
-  if (read(STDIN_FILENO, &ch, 1) < 0)	{ } 
-  if (tcsetattr(STDIN_FILENO, TCSADRAIN, &old_term) < 0)	{ perror("tcsetattr"); }
-  return ch;
-}
-#endif
-
 typedef void V;
 typedef int8_t B;
 typedef intptr_t C;
 
+#define SSTACK_DEPTH 256
+#define RSTACK_DEPTH 256
+
 typedef struct _ForthComputer {
-  C ip;
+  C s[SSTACK_DEPTH];
   C sp;
+  B* r[RSTACK_DEPTH];
   C rp;
-  C wp;
+  B* ip;
+  C up;
+  C mem_size;
   B mem[64*1024];
 } FC;
 
-#define CELLL		sizeof(C)
+FC* init(C mem_size) {
+  FC* fc = malloc(sizeof(FC));
+  if (!fc) return 0;
+  fc->mem = malloc(mem_size);
+  if (!fc->mem) {
+    free(fc);
+    return 0;
+  }
+  fc->mem_size = mem_size;
+}
 
-#define EM			0x4000
-#define COLDD		0x100
-#define US			64*CELLL
-#define RTS			64*CELLL
-#define RPP			EM-8*CELLL
-#define TIBB		RPP-RTS
-#define SPP			TIBB-8*CELLL
-#define UPP			EM-256*CELLL
-#define NAMEE		UPP-8*CELLL
-#define CODEE		COLDD+US
+#define CELL		sizeof(C)
+
+#define T(fc) (fc->s[fc->sp - 1])
+#define N(fc) (fc->s[fc->sp - 2])
+
+#define PUSH(fc, v) (fc->s[fc->sp++] = (C)(v))
+#define POP(fc) (fc->s[--fc->sp])
+#define DROP(fc) (fc->sp--)
+
+#define L1(fc, t1, v1) t1 v1 = (t1)(POP(fc))
+#define L2(fc, t1, v1, t2, v2) L1(fc, t1, v1); L1(fc, t2, v2)
+
+/* System interface */
 
 V bye(FC* fc) { exit(0); }
-V question_rx(FC* fc) { PUSH(
 
+/* Inner interpreters */
+
+B peek(FC* fc) { return *fc->ip; }
+B token(FC* fc) { return *fc->ip++; }
+
+V eval(FC* fc, B* q) {
+  PUSH(fc, (C)q);
+  EXECUTE(fc);
+}
+
+V doLIT(FC* fc) {
+  PUSH(fc, *((C*)fc->ip));
+  fc->ip += CELL;
+}
+
+V doLIST(FC* fc) {
+  C* wp = (C*)fc->ip;
+  while (wp < (fc->mem + fc->mem_size) && *wp != -1) {
+    eval(fc, *wp++);
+  }
+  ret(fc);
+}
+
+/* Memory access */
+
+V cstore(FC* fc) { 
+  L2(fc, C*, a, C, v);
+  *a = v;
+}
+
+V cfetch(FC* fc) {
+  L1(fc, C*, a);
+  PUSH(fc, *a);
+}
+
+V bstore(FC* fc) {
+  L2(fc, B*, a, B, v);
+  *a = v;
+}
+
+V bfetch(FC* fc) {
+  L1(fc, B*, a);
+  PUSH(fc, *a);
+}
+
+/* Return stack */
+
+V rp_fetch(FC* fc) {
+  PUSH(fc, fc->rp);
+}
+
+V rp_store(FC* fc) {
+  L1(fc, C, v);
+  fc->rp = v;
+}
+
+V to_r(FC* fc) {
+  fc->r[fc->rp++] = (B*)fc->s[--fc->sp];
+}
+
+V r_fetch(FC* fc) {
+  fc->s[fc->sp++] = (C)fc->r[fc->rp - 1];
+}
+  
+V from_r(FC* fc) {
+  fc->s[fc->sp++] = (C)fc->r[--fc->rp];
+}
+
+/* Data stack */
+
+V sp_fetch(FC* fc) {
+  PUSH(fc, fc->sp);
+}
+
+V sp_store(FC* fc) {
+  L1(fc, C, v);
+  fc->sp = v;
+}
+
+V drop(FC* fc) {
+  DROP(fc);
+}
+
+V dup(FC* fc) {
+  PUSH(fc, fc->s[fc->sp - 1]);
+}
+
+V swap(FC* fc) {
+  C t = fc->s[fc->sp - 1];
+  fc->s[fc->sp - 1] = fc->s[fc->sp - 2];
+  fc->s[fc->sp - 2] = t;
+}
+
+V over(FC* fc) {
+  PUSH(fc, fc->s[fc->sp - 2]);
+}
+  
+/* Logic */
+
+V lt_0(FC* fc) {
+  T(fc) = T(fc) < 0 ? -1 : 0;
+}
+
+V and(FC* fc) {
+  N(fc) = N(fc) & T(fc);
+  DROP(fc);
+}
+
+V or(FC* fc) {
+  N(fc) = N(fc) | T(fc);
+  DROP(fc);
+}
+
+V xor(FC* fc) {
+  N(fc) = N(fc) ^ T(fc);
+  DROP(fc);
+}
+
+/* Arithmetic */
+
+V um_plus(FC* fc) {
+  N(fc) = N(fc) + T(fc);
+  T(fc) = N(fc) < T(fc);
+}
 
 #endif
