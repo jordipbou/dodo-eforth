@@ -171,4 +171,51 @@ VARIABLE LAST
 	DUP 0 2 UM/MOD DROP
 	- OVER + 0 SWAP ! 2DUP C! 1 + SWAP CMOVE R> ;
 
+: DIGIT ( u -- c ) 9 OVER < 7 AND + 48 + ;
+: EXTRACT ( n base -- n c ) 0 SWAP UM/MOD SWAP DIGIT ;
+: <# ( -- ) PAD HLD ! ;
+: HOLD ( c -- ) HLD @ 1 - DUP HLD ! C! ;
+: # ( u -- u ) BASE @ EXTRACT HOLD ;
+: #S ( u -- 0 ) BEGIN # DUP WHILE REPEAT ;
+: SIGN ( n -- ) 0< IF 45 HOLD THEN ;
+: #> ( w -- b u ) DROP HLD @ PAD OVER - ;
+: str ( n -- b u ) DUP >R ABS <# #S R> SIGN #> ;
+: HEX ( -- )  16 BASE ! ;
+: DECIMAL ( -- ) 10 BASE ! ;
+
+: .R ( n +n -- ) >R str R> OVER - SPACES TYPE ;
+: U.R ( u +n -- ) >R <# #S #> R> OVER - SPACES TYPE ;
+: U. ( u -- ) <# #S #> SPACE TYPE ;
+: . ( w -- ) BASE @ 10 XOR IF U. EXIT THEN str SPACE TYPE ;
+: ? ( a -- ) @ . ;
+
+: DIGIT? ( c base -- u t ) >R 48 - 9 OVER < IF 7 - DUP 10 < OR THEN DUP R> U< ;
+: NUMBER? ( a -- n T | a F )
+  BASE @ >R 0 OVER COUNT
+	OVER C@ 36 =
+	IF HEX SWAP 1 + SWAP 1 - THEN
+	OVER C@ 45 = >R
+	SWAP R@ - SWAP R@ +
+	IF 1 -
+	  FOR DUP >R C@ BASE @ DIGIT?
+		  WHILE SWAP BASE @ * + R> 1 +
+		NEXT DROP R@ IF NEGATE THEN SWAP
+		ELSE R> R> 2DROP 2DROP 0
+		THEN DUP
+	THEN R> 2DROP R> BASE ! ;
+
+: ?KEY ( -- c T | F ) '?KEY @EXECUTE ;
+: KEY ( -- c ) BEGIN ?KEY UNTIL ;
+: EMIT ( c --  'EMIT @EXECUTE ;
+: NUF? ( -- f ) ?KEY DUP IF 2DROP KEY 13 = THEN ;
+: PACE ( -- ) 11 EMIT ;
+: SPACE ( -- ) BL EMIT ;
+: CHARS ( +n c -- ) SWAP 0 MAX FOR AFT DUP EMIT THEN NEXT DROP ;
+: SPACES ( +n -- ) BL CHARS ;
+: TYPE ( b u -- ) FOR AFT DUP C@ EMIT 1 + THEN NEXT DROP ;
+: CR ( -- ) 13 EMIT 10 EMIT ;
+: do$ ( -- a ) R> R@ R> COUNT + ALIGNED >R SWAP >R ;
+: $"| ( -- a ) do$ ;
+: ."| ( -- ) do$ COUNT TYPE ; COMPILE-ONLY
+
 
